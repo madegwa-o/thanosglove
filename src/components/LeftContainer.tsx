@@ -1,23 +1,38 @@
+'use client'
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0";
+import { HandLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
+
+
+type ModelStatus = "INITIALIZING" | "LOADING_WASM" | "LOADING_MODEL" | "READY" | "ERROR" | "CAMERA_ERROR";
+type ApiStatus = "IDLE" | "SENDING" | "SUCCESS" | "API_OFFLINE";
+
+interface Landmark {
+  x: number;
+  y: number;
+  z?: number;
+}
+
+interface ApiResponse {
+  alphabet?: string;
+}
 
 export default function LeftContainer() {
-  // State for dimensions to ensure they stay consistent on re-renders/refresh
   const [dimensions, setDimensions] = useState({
-    width: window.innerWidth,
-    height: window.innerHeight
+    width: typeof window !== 'undefined' ? window.innerWidth : 1920,
+    height: typeof window !== 'undefined' ? window.innerHeight : 1080
   });
 
-  const [model_confidence, setModelConfidence] = useState(0);
-  const [modelStatus, setModelStatus] = useState("INITIALIZING");
-  const [detectedAlphabet, setDetectedAlphabet] = useState("—");
-  const [apiStatus, setApiStatus] = useState("IDLE");
+  const [modelConfidence, setModelConfidence] = useState<number>(0);
+  const [modelStatus, setModelStatus] = useState<ModelStatus>("INITIALIZING");
+  const [detectedAlphabet, setDetectedAlphabet] = useState<string>("—");
+  const [apiStatus, setApiStatus] = useState<ApiStatus>("IDLE");
 
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const landmarkerRef = useRef(null);
-  const requestRef = useRef(null);
-  const lastApiCallRef = useRef(0);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const landmarkerRef = useRef<HandLandmarker | null>(null);
+  const requestRef = useRef<number | null>(null);
+  const lastApiCallRef = useRef<number>(0);
 
   // Update dimensions if window is resized
   useEffect(() => {
@@ -37,9 +52,9 @@ export default function LeftContainer() {
       try {
         setModelStatus("LOADING_WASM");
         const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
         );
-        
+
         setModelStatus("LOADING_MODEL");
         landmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
           baseOptions: {
@@ -49,7 +64,7 @@ export default function LeftContainer() {
           runningMode: "VIDEO",
           numHands: 1
         });
-        
+
         setModelStatus("READY");
       } catch (err) {
         setModelStatus("ERROR");
@@ -64,7 +79,7 @@ export default function LeftContainer() {
   }, []);
 
   // 2. API Communication Logic
-  const sendToPythonAPI = async (landmarks) => {
+  const sendToPythonAPI = async (landmarks: Landmark[]) => {
     const now = Date.now();
     if (now - lastApiCallRef.current < 200) return;
     lastApiCallRef.current = now;
@@ -76,15 +91,15 @@ export default function LeftContainer() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ landmarks: landmarks })
       });
-      
-      const data = await response.json();
+
+      const data: ApiResponse = await response.json();
       if (data.alphabet) {
         setDetectedAlphabet(data.alphabet);
         setApiStatus("SUCCESS");
 
         // DISPATCH CUSTOM EVENT FOR OTHER COMPONENTS TO CONSUME
-        const event = new CustomEvent('signLanguageDetected', { 
-          detail: { alphabet: data.alphabet } 
+        const event = new CustomEvent('signLanguageDetected', {
+          detail: { alphabet: data.alphabet }
         });
         window.dispatchEvent(event);
       }
@@ -96,16 +111,18 @@ export default function LeftContainer() {
   // 3. Detection and Drawing Loop
   const runDetection = useCallback(() => {
     if (
-      videoRef.current &&
-      videoRef.current.readyState === 4 &&
-      landmarkerRef.current &&
-      canvasRef.current
+        videoRef.current &&
+        videoRef.current.readyState === 4 &&
+        landmarkerRef.current &&
+        canvasRef.current
     ) {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
       const startTimeMs = performance.now();
-      
+
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
 
@@ -114,13 +131,12 @@ export default function LeftContainer() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         if (results.landmarks && results.landmarks.length > 0) {
-          // Hardcoding confidence to 10 as per your snippet
           setModelConfidence(10);
 
           const landmarks = results.landmarks[0];
           sendToPythonAPI(landmarks);
 
-          const connections = [
+          const connections: [number, number][] = [
             [0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8],
             [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16],
             [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]
@@ -152,12 +168,13 @@ export default function LeftContainer() {
         console.error("Detection Error:", e);
       }
     }
+    // eslint-disable-next-line react-hooks/immutability
     requestRef.current = requestAnimationFrame(runDetection);
   }, []);
 
   // 4. Setup Camera
   useEffect(() => {
-    let stream = null;
+    let stream: MediaStream | null = null;
     const startCamera = async () => {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -166,7 +183,7 @@ export default function LeftContainer() {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           videoRef.current.onloadedmetadata = () => {
-            videoRef.current.play();
+            videoRef.current?.play();
             requestRef.current = requestAnimationFrame(runDetection);
           };
         }
@@ -182,58 +199,56 @@ export default function LeftContainer() {
   }, [runDetection]);
 
   return (
-    <div className="LeftContainer" style={{ width: '100%', display: 'flex', flexDirection: 'column' }}>
-      <section className="viewport" style={{ 
-        position: 'relative', 
-        overflow: 'hidden', 
-        borderRadius: '1.25rem',
-        border: '2px solid rgba(255,255,255,0.1)', // Using explicit rgba for border since tailwind isn't active
-        width: '100%',
-        minHeight: `${0.6 * dimensions.height}px`,
-        maxHeight: `${0.6 * dimensions.height}px`,
-        maxWidth: `${0.56 * dimensions.width}px`
-      }}>
-        <video 
-          ref={videoRef} 
-          playsInline 
-          muted 
-          style={{ 
-            width: "100%", 
-            height: "100%", 
-            objectFit: "cover", 
-            backgroundColor: "#000", 
-            display: 'block' 
-          }} 
-        />
-        <canvas 
-          ref={canvasRef} 
-          style={{ 
-            position: 'absolute', 
-            top: 0, 
-            left: 0, 
-            width: '100%', 
-            height: '100%', 
-            objectFit: 'cover', 
-            pointerEvents: 'none' 
-          }} 
-        />
-        
-        {/* API Detection HUD */}
-        <div style={{ position: 'absolute', bottom: '20px', right: '20px', background: 'rgba(0,0,0,0.8)', padding: '15px', borderRadius: '12px', textAlign: 'center', minWidth: '80px', border: '1px solid rgba(255,255,255,0.1)', zIndex: 10 }}>
-          <div style={{ fontSize: '10px', color: '#818cf8', marginBottom: '5px', letterSpacing: '0.2em' }}>DETECTED</div>
-          <div style={{ fontSize: '32px', fontWeight: 'bold', color: 'white' }}>{detectedAlphabet}</div>
-        </div>
+      <div className="w-full flex flex-col mb-8">
+        <section
+            className="relative overflow-hidden rounded-3xl border-2 border-white/10 w-full"
+            style={{
+              minHeight: `${0.6 * dimensions.height}px`,
+              maxHeight: `${0.6 * dimensions.height}px`,
+              maxWidth: `${0.56 * dimensions.width}px`
+            }}
+        >
+          <video
+              ref={videoRef}
+              playsInline
+              muted
+              className="w-full h-full object-cover bg-black block"
+          />
+          <canvas
+              ref={canvasRef}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                pointerEvents: 'none'
+              }}
+          />
 
-        <div style={{ position: 'absolute', top: '20px', left: '20px', background: 'rgba(0,0,0,0.6)', padding: '5px 10px', borderRadius: '5px', fontSize: '10px', color: modelStatus === "READY" ? "#22c55e" : "#f59e0b", zIndex: 10, letterSpacing: '0.1em' }}>
-          STATUS: {modelStatus} | API: {apiStatus}
-        </div>
-      </section>
+          {/* API Detection HUD */}
+          <div className="absolute bottom-5 right-5 bg-black/80 p-4 rounded-xl text-center min-w-[80px] border border-white/10 z-10">
+            <div className="text-[10px] text-indigo-400 mb-1 tracking-widest">DETECTED</div>
+            <div className="text-[32px] font-bold text-white">{detectedAlphabet}</div>
+          </div>
 
-      <span className='tech-label' style={{ justifySelf: "left", color: "white", marginTop: '1.5rem', display: 'block' }}>Model Confidence : </span>
-      <div className="progress-track" style={{ background: 'rgba(255,255,255,0.1)', height: '8px', borderRadius: '4px', overflow: 'hidden', marginTop: '0.5rem' }}>
-        <div className="progress-filler" style={{ width: `${model_confidence}%`, height: '100%', background: '#6366f1', transition: 'width 0.1s linear' }}></div>
+          <div
+              className="absolute top-5 left-5 bg-black/60 px-3 py-1.5 rounded-md text-[10px] tracking-wide z-10"
+              style={{ color: modelStatus === "READY" ? "#22c55e" : "#f59e0b" }}
+          >
+            STATUS: {modelStatus} | API: {apiStatus}
+          </div>
+        </section>
+
+        <span className="text-white mt-6 mb-2 text-sm">Model Confidence:</span>
+        <div className="bg-white/10 h-2 rounded overflow-hidden">
+          <div
+              className="h-full bg-indigo-600 transition-all duration-100"
+              style={{ width: `${modelConfidence}%` }}
+          />
+        </div>
+        <h4 className="text-white mt-2 text-right text-sm">{modelConfidence}%</h4>
       </div>
-      <h4 style={{ justifySelf: "right", color: 'white', marginTop: '0.5rem' }}>{model_confidence} %</h4>
-    </div>
   );
 }

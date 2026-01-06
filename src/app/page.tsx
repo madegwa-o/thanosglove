@@ -1,4 +1,4 @@
-import Image from "next/image";
+
 import LeftContainer from "@/components/LeftContainer";
 import RightContainer from "@/components/RightContainer";
 
